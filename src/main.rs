@@ -1,11 +1,17 @@
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::{
+    io::BufReader,
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+};
 
+use resp::resp_parser::{encode_raw, RespParser};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
 
-const PONG: &[u8] = b"+PONG\r\n";
+use crate::resp::RespDT;
+
+mod resp;
 
 async fn handle_ping(
     buffer: &mut [u8; 1 << 10],
@@ -15,9 +21,68 @@ async fn handle_ping(
         match stream.read(buffer).await {
             Ok(0) => return Ok(()),
             Ok(n) => {
-                println!("Recieved {} bytes", n);
-                stream.write_all(PONG).await?;
-                stream.flush().await?;
+                let mut parser = RespParser::new(BufReader::new(&buffer[..n]));
+                let a = parser.decode()?;
+                match a {
+                    RespDT::Array(a) => {
+                        if a.len() == 1 {
+                            let inline_cmd = a.get(0).unwrap();
+                            match inline_cmd {
+                                RespDT::Bulk(cmd) => {
+                                    if cmd.to_lowercase().eq("ping") {
+                                        let pong = encode_raw(&resp::RespDT::SimpleString(
+                                            "PONG".to_string(),
+                                        ));
+                                        stream.write_all(&pong).await?;
+                                        stream.flush().await?;
+                                    } else {
+                                        eprintln!("Error input: {:?}", a);
+                                        return Ok(());
+                                    }
+                                }
+                                _ => {
+                                    eprintln!("Error input: {:?}", a);
+                                    return Ok(());
+                                }
+                            }
+                        } else if a.len() == 2 {
+                            let responsive_cmd = a.get(0).unwrap();
+                            let callback = a.get(1).unwrap();
+                            match responsive_cmd {
+                                RespDT::Bulk(cmd) => {
+                                    if cmd.to_lowercase().eq("echo") {
+                                        match callback {
+                                            RespDT::Bulk(cb) => {
+                                                let echo =
+                                                    encode_raw(&resp::RespDT::Bulk(cb.clone()));
+                                                stream.write_all(&echo).await?;
+                                                stream.flush().await?;
+                                            }
+                                            _ => {
+                                                eprintln!("Error input: {:?}", a);
+                                                return Ok(());
+                                            }
+                                        }
+                                    } else {
+                                        eprintln!("Error input: {:?}", a);
+                                        return Ok(());
+                                    }
+                                }
+                                _ => {
+                                    eprintln!("Error input: {:?}", a);
+                                    return Ok(());
+                                }
+                            }
+                        } else {
+                            eprintln!("Error input: {:?}", a);
+                            return Ok(());
+                        }
+                    }
+                    _ => {
+                        eprintln!("Error input: {:?}", a);
+                        return Ok(());
+                    }
+                }
             }
             Err(e) => eprintln!("Error reading from socket: {}", e),
         }
