@@ -1,8 +1,11 @@
 #![allow(dead_code, unused)]
 use std::{
-    io::{BufRead, BufReader, Error, ErrorKind, Read},
+    io::{Error, ErrorKind},
     vec,
 };
+
+use async_recursion::async_recursion;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, BufReader};
 
 /// up to 512 MB in length
 const RESP_MAX_SIZE: i64 = 512 * 1024 * 1024;
@@ -15,10 +18,13 @@ pub struct RespParser<R> {
     pub buf_bulk: bool,
 }
 
-impl<R: Read> RespParser<R> {
-    pub fn new(reader: BufReader<R>) -> Self {
+impl<R> RespParser<R>
+where
+    R: AsyncBufRead + Unpin + Send,
+{
+    pub fn new(reader: R) -> Self {
         RespParser {
-            reader,
+            reader: BufReader::new(reader),
             buf_bulk: false,
         }
     }
@@ -30,9 +36,10 @@ impl<R: Read> RespParser<R> {
         }
     }
 
-    pub fn decode(&mut self) -> Result<RespDT, Box<dyn std::error::Error>> {
+    #[async_recursion]
+    pub async fn decode(&mut self) -> Result<RespDT, Box<dyn std::error::Error>> {
         let mut res: Vec<u8> = Vec::new();
-        self.reader.read_until(b'\n', &mut res)?;
+        self.reader.read_until(b'\n', &mut res).await?;
         let fb = res[0];
         let len = res.len();
         if len == 0 {
@@ -64,7 +71,7 @@ impl<R: Read> RespParser<R> {
                     .into());
                 }
                 let mut buf = vec![0; (data_length + 2) as usize];
-                self.reader.read_exact(&mut buf)?;
+                self.reader.read_exact(&mut buf).await?;
                 if !is_crlf(buf[buf.len() - 2], buf[buf.len() - 1]) {
                     return Err(Error::new(
                         ErrorKind::InvalidInput,
@@ -92,7 +99,7 @@ impl<R: Read> RespParser<R> {
                 }
                 let mut arr = Vec::with_capacity(data_length as usize);
                 for _ in 0..data_length {
-                    arr.push(self.decode()?);
+                    arr.push(self.decode().await?);
                 }
                 Ok(RespDT::Array(arr))
             }
@@ -216,169 +223,169 @@ pub enum RespDT {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_parse_echo() {
+    #[tokio::test]
+    async fn test_parse_echo() {
         let input = b"*2\r\n$4\r\necho\r\n$3\r\nhey\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_ping() {
+    #[tokio::test]
+    async fn test_parse_ping() {
         let input = b"*1\r\n$4\r\nping\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
-    #[test]
-    fn test_parse_simple_string() {
+    #[tokio::test]
+    async fn test_parse_simple_string() {
         let input = b"+OK\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_simple_error() {
+    #[tokio::test]
+    async fn test_parse_simple_error() {
         let input = b"-ERR unknown command 'asdf'\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_simple_error_with_wrongtype() {
+    #[tokio::test]
+    async fn test_parse_simple_error_with_wrongtype() {
         let input = b"-WRONGTYPE Operation against a key holding the wrong kind of value\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_integer() {
+    #[tokio::test]
+    async fn test_parse_integer() {
         let input = b":42\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_intege_negative() {
+    #[tokio::test]
+    async fn test_parse_intege_negative() {
         let input = b":-6742\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_bulk_string() {
+    #[tokio::test]
+    async fn test_parse_bulk_string() {
         let input = b"$5\r\nHello\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_bulk_string_empty() {
+    #[tokio::test]
+    async fn test_parse_bulk_string_empty() {
         let input = b"$0\r\n\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_buf_bulk_string() {
+    #[tokio::test]
+    async fn test_parse_buf_bulk_string() {
         let input = b"$5\r\nHello\r\n";
         let mut parser = RespParser::with_buf_bulk(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_buf_bulk_string_empty() {
+    #[tokio::test]
+    async fn test_parse_buf_bulk_string_empty() {
         let input = b"$0\r\n\r\n";
         let mut parser = RespParser::with_buf_bulk(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_null_array() {
+    #[tokio::test]
+    async fn test_parse_null_array() {
         let input = b"*-1\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_array_empty() {
+    #[tokio::test]
+    async fn test_parse_array_empty() {
         let input = b"*0\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_array_two_strs() {
+    #[tokio::test]
+    async fn test_parse_array_two_strs() {
         let input = b"*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_array_three_ints() {
+    #[tokio::test]
+    async fn test_parse_array_three_ints() {
         let input = b"*3\r\n:1\r\n:2\r\n:3\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_array_mix() {
+    #[tokio::test]
+    async fn test_parse_array_mix() {
         let input = b"*5\r\n:1\r\n:2\r\n:3\r\n:4\r\n$5\r\nhello\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_array_nested() {
+    #[tokio::test]
+    async fn test_parse_array_nested() {
         let input = b"*2\r\n*3\r\n:1\r\n:2\r\n:3\r\n*2\r\n+Hello\r\n-World\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn test_parse_array_command() {
+    #[tokio::test]
+    async fn test_parse_array_command() {
         let input = b"*2\r\n$4\r\nLLEN\r\n$6\r\nmylist\r\n";
         let mut parser = RespParser::new(BufReader::new(&input[..]));
-        let r = parser.decode();
+        let r = parser.decode().await;
         assert!(r.is_ok());
         dbg!(r);
     }
 
-    #[test]
-    fn fn_encode_slice() {
+    #[tokio::test]
+    async fn fn_encode_slice() {
         let array = ["SET", "a", "1"];
         assert_eq!(
             String::from_utf8(encode_slice(&array)).unwrap(),
@@ -392,8 +399,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn fn_encode_pong() {
+    #[tokio::test]
+    async fn fn_encode_pong() {
         let r = encode(&RespDT::SimpleString("PONG".to_string()));
         assert!(r.is_ok());
         dbg!(r.unwrap());
