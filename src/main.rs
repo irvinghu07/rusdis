@@ -4,18 +4,28 @@ use tokio::io::BufReader;
 use tokio::net::{TcpListener, TcpStream};
 
 mod resp;
-use resp::{RespDT, RespParser};
+use resp::{RespDT, RespHandler};
 
 async fn handle_conn(stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
-    let mut parser = RespParser::new(BufReader::new(stream));
-    let resp: RespDT = parser.decode().await?;
-    println!("Got resp: {:?}", resp);
-    // println!("Starting read loop");
-    // loop {
-    //     let resp = parser.decode().await?;
-    //     println!("Got resp: {:?}", resp);
-    // }
-    unimplemented!();
+    let mut handler = RespHandler::new(BufReader::new(stream));
+    println!("Starting read loop");
+    loop {
+        let resp = handler.decode().await?;
+        match resp {
+            Some(res) => {
+                let (cmd, args) = res.extract_resp().unwrap();
+                let response = match cmd.to_lowercase().as_str() {
+                    "ping" => RespDT::SimpleString("PONG".to_string()),
+                    "echo" => {
+                        RespDT::SimpleString(args.first().unwrap().extrac_bulk_str().unwrap())
+                    }
+                    c => RespDT::SimpleString(format!("Cannot Handle command:{}", c)),
+                };
+                handler.write(response.encode_raw()).await?;
+            }
+            None => return Ok(()),
+        }
+    }
 }
 
 #[tokio::main]
