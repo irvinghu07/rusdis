@@ -138,7 +138,7 @@ fn parse_integer(bytes: &[u8]) -> Result<i64, Box<dyn std::error::Error>> {
         .map_err(|err| Error::new(ErrorKind::InvalidData, err).into())
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RespDT {
     SimpleString(String),
     SimpleError(String),
