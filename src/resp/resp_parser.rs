@@ -162,16 +162,15 @@ impl RespDT {
     pub fn extract_resp(&self) -> Result<(String, Vec<&RespDT>), Box<dyn std::error::Error>> {
         match self {
             RespDT::Array(a) => {
-                let cmd = a.first().unwrap().clone().extrac_bulk_str().unwrap();
+                let cmd = a.first().unwrap().clone().extract_bulk_str().unwrap().to_ascii_lowercase();
                 let args = a.into_iter().skip(1).collect::<Vec<_>>();
-                // let args = a.into_iter().skip(1).collect();
                 Ok((cmd, args))
             }
             _ => Err(Error::new(ErrorKind::Unsupported, "Unexpected command format").into()),
         }
     }
 
-    pub fn extrac_bulk_str(&self) -> Result<String, Box<dyn std::error::Error>> {
+    pub fn extract_bulk_str(&self) -> Result<String, Box<dyn std::error::Error>> {
         match self {
             RespDT::Bulk(s) => Ok(s.to_string()),
             _ => Err(Error::new(
