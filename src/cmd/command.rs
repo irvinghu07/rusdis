@@ -1,46 +1,74 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
-use tokio::sync::Mutex;
+use crate::{resp::RespDT, store::cache::Db};
 
-use crate::resp::RespDT;
+const SET_CMD_RESP: &'static str = "OK";
+const PONG_CMD_RESP: &'static str = "PONG";
 
-type Cache = Arc<Mutex<HashMap<String, String>>>;
+trait CommandRespond {
+    async fn response_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
+}
+#[derive(Debug)]
+pub struct PingCommand;
+
+impl CommandRespond for PingCommand {
+    async fn response_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        Ok(RespDT::SimpleString(PONG_CMD_RESP.to_string()).encode_raw())
+    }
+}
+#[derive(Debug)]
+pub struct EchoCommand {
+    pub message: String,
+}
+
+impl CommandRespond for EchoCommand {
+    async fn response_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        Ok(RespDT::SimpleString(self.message.clone()).encode_raw())
+    }
+}
+#[derive(Debug)]
+pub struct SetCommand {
+    pub key: String,
+    pub value: String,
+    pub cache: Arc<Db>,
+}
+impl CommandRespond for SetCommand {
+    async fn response_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        self.cache.store(self.key.clone(), self.value.clone()).await;
+        Ok(RespDT::SimpleString(SET_CMD_RESP.to_string()).encode_raw())
+    }
+}
+
+#[derive(Debug)]
+pub struct GetCommand {
+    pub key: String,
+    pub cache: Arc<Db>,
+}
+
+impl CommandRespond for GetCommand {
+    async fn response_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        match self.cache.fetch(self.key.clone()).await {
+            Some(val) => Ok(RespDT::SimpleString(val).encode_raw()),
+            None => Ok(RespDT::Null.encode_raw()),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum Command {
-    Ping(RespDT),
-    Echo(RespDT),
-    Set(String, String),
-    Get(String),
+    Ping(PingCommand),
+    Echo(EchoCommand),
+    Set(SetCommand),
+    Get(GetCommand),
 }
 
 impl Command {
-    pub async fn execute(&self, db: Cache) -> Vec<u8> {
+    pub async fn execute(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         match self {
-            Command::Ping(resp) => Self::handle_ping(resp),
-            Command::Echo(resp) => Self::handle_echo(resp),
-            Command::Set(key, val) => Self::handle_set(db, key.to_string(), val.to_string()).await,
-            Command::Get(key) => Self::handle_get(db, key).await,
-        }
-    }
-
-    fn handle_ping(resp: &RespDT) -> Vec<u8> {
-        resp.encode_raw()
-    }
-
-    fn handle_echo(resp: &RespDT) -> Vec<u8> {
-        resp.encode_raw()
-    }
-
-    async fn handle_set(db: Cache, key: String, val: String) -> Vec<u8> {
-        db.lock().await.insert(key, val);
-        RespDT::SimpleString("OK".to_string()).encode_raw()
-    }
-
-    async fn handle_get(db: Cache, key: &String) -> Vec<u8> {
-        match db.lock().await.get(key) {
-            Some(val) => RespDT::SimpleString(val.to_string()).encode_raw(),
-            None => RespDT::Null.encode_raw(),
+            Command::Ping(cmd) => cmd.response_bytes().await,
+            Command::Echo(cmd) => cmd.response_bytes().await,
+            Command::Set(cmd) => cmd.response_bytes().await,
+            Command::Get(cmd) => cmd.response_bytes().await,
         }
     }
 }
@@ -52,19 +80,30 @@ pub enum CommandError {
     InvalidArguments,
 }
 
-impl TryFrom<RespDT> for Command {
+pub struct RespCache {
+    pub cache: Arc<Db>,
+    pub resp: RespDT,
+}
+
+impl RespCache {
+    pub fn new(cache: Arc<Db>, resp: RespDT) -> Self {
+        RespCache { cache, resp }
+    }
+}
+
+impl TryFrom<RespCache> for Command {
     type Error = CommandError;
 
-    fn try_from(value: RespDT) -> Result<Self, Self::Error> {
-        let (cmd, args) = value.extract_resp().unwrap();
+    fn try_from(value: RespCache) -> Result<Self, Self::Error> {
+        let (cmd, args) = value.resp.extract_resp().unwrap();
         match cmd.as_str() {
-            "ping" => Ok(Command::Ping(RespDT::SimpleString("PONG".to_string()))),
+            "ping" => Ok(Command::Ping(PingCommand)),
             "echo" => {
                 if args.len() != 1 {
                     return Err(CommandError::InvalidArguments);
                 }
                 match args.first().unwrap().extract_bulk_str() {
-                    Ok(arg) => Ok(Command::Echo(RespDT::SimpleString(arg))),
+                    Ok(message) => Ok(Command::Echo(EchoCommand { message })),
                     Err(_) => Err(CommandError::InvalidCommand),
                 }
             }
@@ -72,17 +111,19 @@ impl TryFrom<RespDT> for Command {
                 if args.len() < 2 {
                     Err(CommandError::InvalidArguments)
                 } else {
-                    Ok(Command::Set(
-                        args.first().unwrap().extract_bulk_str().unwrap(),
-                        args.last().unwrap().extract_bulk_str().unwrap(),
-                    ))
+                    Ok(Command::Set(SetCommand {
+                        key: args.first().unwrap().extract_bulk_str().unwrap(),
+                        value: args.get(1).unwrap().extract_bulk_str().unwrap(),
+                        cache: value.cache,
+                    }))
                 }
             }
             "get" => {
                 if args.len() == 1 {
-                    Ok(Command::Get(
-                        args.first().unwrap().extract_bulk_str().unwrap(),
-                    ))
+                    Ok(Command::Get(GetCommand {
+                        key: args.first().unwrap().extract_bulk_str().unwrap(),
+                        cache: value.cache,
+                    }))
                 } else {
                     Err(CommandError::InvalidArguments)
                 }
