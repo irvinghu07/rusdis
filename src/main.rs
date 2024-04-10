@@ -4,14 +4,17 @@ use std::sync::Arc;
 use tokio::io::BufReader;
 use tokio::net::{TcpListener, TcpStream};
 
+mod cli;
 mod cmd;
 mod resp;
 mod store;
+use cli::CliArgs;
 use cmd::Command;
 use resp::RespHandler;
 use store::Db;
 
 use crate::cmd::command::RespCache;
+use clap::Parser;
 
 async fn handle_conn(cache: Arc<Db>, stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
     let mut handler = RespHandler::new(BufReader::new(stream));
@@ -37,9 +40,8 @@ async fn handle_conn(cache: Arc<Db>, stream: TcpStream) -> Result<(), Box<dyn st
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    println!("Logs from your program will appear here!");
-    let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 6379));
+    let args = CliArgs::parse();
+    let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), args.port));
     let listener = TcpListener::bind(addr).await?;
     println!("Listening on {}:{}", addr.ip(), addr.port());
     let cache = Arc::new(Db::new());

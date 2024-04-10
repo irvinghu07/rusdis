@@ -5,8 +5,8 @@ use std::{
 
 use crate::{resp::RespDT, store::cache::Db};
 
-const SET_CMD_RESP: &'static str = "OK";
-const PONG_CMD_RESP: &'static str = "PONG";
+const SET_CMD_RESP: &str = "OK";
+const PONG_CMD_RESP: &str = "PONG";
 
 trait CommandRespond {
     async fn response_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>>;

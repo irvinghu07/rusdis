@@ -8,9 +8,9 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
 
 /// up to 512 MB in length
 const RESP_MAX_SIZE: i64 = 512 * 1024 * 1024;
-const CRLF_BYTES: &'static [u8] = b"\r\n";
-const NULL_BYTES: &'static [u8] = b"$-1\r\n";
-const NULL_ARRAY_BYTES: &'static [u8] = b"*-1\r\n";
+const CRLF_BYTES: &[u8] = b"\r\n";
+const NULL_BYTES: &[u8] = b"$-1\r\n";
+const NULL_ARRAY_BYTES: &[u8] = b"*-1\r\n";
 
 pub struct RespHandler<R> {
     pub rw_tools: R,
@@ -72,7 +72,7 @@ where
                 if data_length == -1 {
                     return Ok(Some(RespDT::Null));
                 }
-                if data_length < -1 || data_length > RESP_MAX_SIZE {
+                if (0..RESP_MAX_SIZE).contains(&data_length) {
                     return Err(Error::new(
                         ErrorKind::InvalidInput,
                         format!("invalid bulk string length: {}", data_length),
@@ -99,7 +99,7 @@ where
                 if data_length == -1 {
                     return Ok(Some(RespDT::NullArray));
                 }
-                if data_length < -1 || data_length > RESP_MAX_SIZE {
+                if (0..RESP_MAX_SIZE).contains(&data_length) {
                     return Err(Error::new(
                         ErrorKind::InvalidInput,
                         format!("invalid array length: {}", data_length),
@@ -169,7 +169,7 @@ impl RespDT {
                     .extract_bulk_str()
                     .unwrap()
                     .to_ascii_lowercase();
-                let args = a.into_iter().skip(1).collect::<Vec<_>>();
+                let args = a.iter().skip(1).collect::<Vec<_>>();
                 Ok((cmd, args))
             }
             _ => Err(Error::new(ErrorKind::Unsupported, "Unexpected command format").into()),
@@ -239,7 +239,7 @@ impl RespDT {
                 buf.extend_from_slice(b"$");
                 buf.extend_from_slice(data.len().to_string().as_bytes());
                 buf.extend_from_slice(CRLF_BYTES);
-                buf.extend_from_slice(&data);
+                buf.extend_from_slice(data);
                 buf.extend_from_slice(CRLF_BYTES);
             }
             RespDT::Array(arr) => {
