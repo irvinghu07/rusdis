@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use crate::{resp::RespDT, store::cache::Db};
 
@@ -20,6 +23,7 @@ pub struct EchoCommand {
 pub struct SetCommand {
     pub key: String,
     pub value: String,
+    pub expiry: Option<SystemTime>,
     pub cache: Arc<Db>,
 }
 
@@ -43,7 +47,9 @@ impl CommandRespond for EchoCommand {
 
 impl CommandRespond for SetCommand {
     async fn response_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-        self.cache.store(self.key.clone(), self.value.clone()).await;
+        self.cache
+            .store(self.key.clone(), self.value.clone(), self.expiry)
+            .await;
         Ok(RespDT::SimpleString(SET_CMD_RESP.to_string()).encode_raw())
     }
 }
@@ -98,7 +104,7 @@ impl TryFrom<RespCache> for Command {
     type Error = CommandError;
 
     fn try_from(value: RespCache) -> Result<Self, Self::Error> {
-        let (cmd, args) = value.resp.extract_resp().unwrap();
+        let (cmd, args) = value.resp.extract_array().unwrap();
         match cmd.as_str() {
             "ping" => Ok(Command::Ping(PingCommand)),
             "echo" => {
@@ -114,9 +120,36 @@ impl TryFrom<RespCache> for Command {
                 if args.len() < 2 {
                     Err(CommandError::InvalidArguments)
                 } else {
+                    if args.len() == 4
+                        && args
+                            .get(2)
+                            .unwrap()
+                            .extract_bulk_str()
+                            .unwrap()
+                            .to_lowercase()
+                            .eq("px")
+                    {
+                        let expiry = args
+                            .get(3)
+                            .unwrap()
+                            .extract_bulk_str()
+                            .unwrap()
+                            .parse::<u64>()
+                            .unwrap();
+                        let expiry = SystemTime::now()
+                            .checked_add(Duration::from_millis(expiry))
+                            .unwrap();
+                        return Ok(Command::Set(SetCommand {
+                            key: args.first().unwrap().extract_bulk_str().unwrap(),
+                            value: args.get(1).unwrap().extract_bulk_str().unwrap(),
+                            expiry: Some(expiry),
+                            cache: value.cache,
+                        }));
+                    }
                     Ok(Command::Set(SetCommand {
                         key: args.first().unwrap().extract_bulk_str().unwrap(),
                         value: args.get(1).unwrap().extract_bulk_str().unwrap(),
+                        expiry: None,
                         cache: value.cache,
                     }))
                 }

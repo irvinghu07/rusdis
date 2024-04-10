@@ -159,10 +159,16 @@ pub enum RespDT {
 }
 
 impl RespDT {
-    pub fn extract_resp(&self) -> Result<(String, Vec<&RespDT>), Box<dyn std::error::Error>> {
+    pub fn extract_array(&self) -> Result<(String, Vec<&RespDT>), Box<dyn std::error::Error>> {
         match self {
             RespDT::Array(a) => {
-                let cmd = a.first().unwrap().clone().extract_bulk_str().unwrap().to_ascii_lowercase();
+                let cmd = a
+                    .first()
+                    .unwrap()
+                    .clone()
+                    .extract_bulk_str()
+                    .unwrap()
+                    .to_ascii_lowercase();
                 let args = a.into_iter().skip(1).collect::<Vec<_>>();
                 Ok((cmd, args))
             }
