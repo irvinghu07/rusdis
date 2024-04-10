@@ -72,7 +72,7 @@ where
                 if data_length == -1 {
                     return Ok(Some(RespDT::Null));
                 }
-                if (0..RESP_MAX_SIZE).contains(&data_length) {
+                if !(0..RESP_MAX_SIZE).contains(&data_length) {
                     return Err(Error::new(
                         ErrorKind::InvalidInput,
                         format!("invalid bulk string length: {}", data_length),
@@ -99,7 +99,7 @@ where
                 if data_length == -1 {
                     return Ok(Some(RespDT::NullArray));
                 }
-                if (0..RESP_MAX_SIZE).contains(&data_length) {
+                if !(0..RESP_MAX_SIZE).contains(&data_length) {
                     return Err(Error::new(
                         ErrorKind::InvalidInput,
                         format!("invalid array length: {}", data_length),
