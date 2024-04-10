@@ -15,7 +15,6 @@ use crate::cmd::command::RespCache;
 
 async fn handle_conn(cache: Arc<Db>, stream: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
     let mut handler = RespHandler::new(BufReader::new(stream));
-    println!("Starting read loop");
     loop {
         let resp = handler.decode().await?;
         match resp {

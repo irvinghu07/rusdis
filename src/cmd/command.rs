@@ -11,14 +11,28 @@ trait CommandRespond {
 #[derive(Debug)]
 pub struct PingCommand;
 
+#[derive(Debug)]
+pub struct EchoCommand {
+    pub message: String,
+}
+
+#[derive(Debug)]
+pub struct SetCommand {
+    pub key: String,
+    pub value: String,
+    pub cache: Arc<Db>,
+}
+
+#[derive(Debug)]
+pub struct GetCommand {
+    pub key: String,
+    pub cache: Arc<Db>,
+}
+
 impl CommandRespond for PingCommand {
     async fn response_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         Ok(RespDT::SimpleString(PONG_CMD_RESP.to_string()).encode_raw())
     }
-}
-#[derive(Debug)]
-pub struct EchoCommand {
-    pub message: String,
 }
 
 impl CommandRespond for EchoCommand {
@@ -26,23 +40,12 @@ impl CommandRespond for EchoCommand {
         Ok(RespDT::SimpleString(self.message.clone()).encode_raw())
     }
 }
-#[derive(Debug)]
-pub struct SetCommand {
-    pub key: String,
-    pub value: String,
-    pub cache: Arc<Db>,
-}
+
 impl CommandRespond for SetCommand {
     async fn response_bytes(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         self.cache.store(self.key.clone(), self.value.clone()).await;
         Ok(RespDT::SimpleString(SET_CMD_RESP.to_string()).encode_raw())
     }
-}
-
-#[derive(Debug)]
-pub struct GetCommand {
-    pub key: String,
-    pub cache: Arc<Db>,
 }
 
 impl CommandRespond for GetCommand {
